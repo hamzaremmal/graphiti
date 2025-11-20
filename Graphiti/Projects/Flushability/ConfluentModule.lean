@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Hamza Remmal
 -/
@@ -7,6 +7,8 @@ Authors: Hamza Remmal
 import Graphiti.Core.Module
 import Graphiti.Core.ModuleLemmas
 import Graphiti.Projects.Flushability.DeterministicModule
+import Graphiti.Projects.Flushability.RuleSwapping
+import Graphiti.Projects.Flushability.ModuleProperties
 import Mathlib.Tactic
 
 namespace Graphiti
@@ -43,6 +45,15 @@ class StronglyConfluent: Prop where
     → ∃ s₄, (existSR mod.internals s₂ s₄ ∧ ∃ r ∈ mod.internals, r s₃ s₄)
           ∨ (existSR mod.internals s₃ s₄ ∧ ∃ r ∈ mod.internals, r s₂ s₄)
 
+---------------------------------------------------------------------------------------------------
+---------------------------------------- GLOBAL-CONFLUENCE ----------------------------------------
+---------------------------------------------------------------------------------------------------
+
+class InternallyGlobalyConfluent: Prop where
+  internals: ∀ s₁ s₂ s₃,
+    existSR mod.internals s₁ s₂ → existSR mod.internals s₁ s₃
+    → ∃ s₄, existSR mod.internals s₂ s₄ ∧ existSR mod.internals s₃ s₄
+
 class GloballyConfluent: Prop where
   inputs: ∀ ident s₁ v s₂ s₃,
     (mod.inputs.getIO ident).snd s₁ v s₂ → (mod.inputs.getIO ident).snd s₁ v s₃
@@ -52,6 +63,15 @@ class GloballyConfluent: Prop where
     → ∃ s₄, existSR mod.internals s₂ s₄ ∧ existSR mod.internals s₃ s₄
   outputs: ∀ ident s₁ v s₂ s₃,
     (mod.outputs.getIO ident).snd s₁ v s₂ → (mod.outputs.getIO ident).snd s₁ v s₃
+    → ∃ s₄, existSR mod.internals s₂ s₄ ∧ existSR mod.internals s₃ s₄
+
+---------------------------------------------------------------------------------------------------
+---------------------------------------- QUASI-CONFLUENCE -----------------------------------------
+---------------------------------------------------------------------------------------------------
+
+class InternallyQuasiConfluent: Prop where
+  internals: ∀ s₁ s₂ s₃, ∀ r ∈ mod.internals,
+    r s₁ s₂ → existSR mod.internals s₁ s₃
     → ∃ s₄, existSR mod.internals s₂ s₄ ∧ existSR mod.internals s₃ s₄
 
 class QuasiConfluent: Prop where
@@ -125,23 +145,35 @@ by
   . intro s₁ s₂ s₃ h₁ h₂
     induction h₁ generalizing s₃ with
     | done =>
-      use s₃
-      simpa [existSR_reflexive]
-    | step _ mid final r₁ =>
-      induction h₂ generalizing mid with
+      use s₃ <;> and_intros
+      . exact h₂
+      . exact existSR_reflexive
+    | step init₁ mid₁ final₁ r₁ _ h₁ _ ih₁ =>
+      induction h₂ generalizing s₁ s₂ mid₁ final₁ r₁ with
       | done init =>
-        use final
-        simp [existSR_reflexive]
-        have: existSR mod.internals init mid := by
-          apply existSR_single_step <;> assumption
-        apply existSR_transitive <;> assumption
-      | step i₁ i₂ _ r₂ =>
-        rename_i ih₁ _ _ ih₂
-        apply ih₁
-        . sorry
-        . sorry
-        . sorry
-        . sorry
+        use final₁ <;> and_intros
+        . exact existSR_reflexive
+        . apply existSR_transitive _ _ mid₁ _
+          . apply existSR_single_step <;> assumption
+          . assumption
+      | step i₁ i₂ i₃ r₂ _ _ _ ih₂ =>
+        have ⟨s₅, h⟩ := sc.internals i₁ mid₁ i₂ r₁ (by assumption) r₂ (by assumption) (by assumption) (by assumption)
+        cases h with
+        | inl h =>
+          obtain ⟨_, ⟨r, _, _⟩⟩ := h
+          have ⟨s₆, _, _⟩ := ih₁ s₅ (by assumption)
+          have: ∀ (s₃ : S), existSR mod.internals s₅ s₃ → ∃ s₄, existSR mod.internals s₆ s₄ ∧ existSR mod.internals s₃ s₄ := by
+            intro ss hhh
+            have: existSR mod.internals mid₁ ss := by sorry
+            specialize ih₁ ss this
+            obtain ⟨sss, _, _⟩ := ih₁
+            use ss <;> and_intros
+            . sorry
+            . sorry
+          specialize ih₂ s₁ s₂ s₅ final₁ r (by assumption) (by assumption)
+          sorry
+        | inr h =>
+          sorry
   . intros _ s₁ _ s₂ s₃ _ _
     have: ∃ s₄, (existSR mod.internals s₂ s₄ ∧ ∃ r ∈ mod.internals, r s₃ s₄) ∨ (existSR mod.internals s₃ s₄ ∧ ∃ r ∈ mod.internals, r s₂ s₄) := by
       apply sc.outputs <;> assumption
@@ -188,61 +220,81 @@ end ConfluenceDerivation
 
 section Determinism
 
-theorem bla {α : Type _} {a c : α} (b : List α) :
+private theorem bla {α : Type _} {a c : α} (b : List α) :
   a ∈ b → c ∈ b → b.length = 1 → a = c :=
 by
-  intro ha hc hl
-  cases b with
-  | nil => exfalso; rw [List.length_nil] at hl; contradiction
-  | cons x xs => cases xs with
-    | nil =>
-      simp at *; subst_vars; rfl
-    | cons x' xs' =>
-      repeat rw [List.length_cons] at hl
-      rw [Nat.add_eq_right] at hl
-      rw [Nat.add_eq_zero] at hl
-      cases ‹ _ ∧ _ ›
-      contradiction
+  intros <;> cases b with
+  | nil => exfalso; contradiction
+  | cons x xs => grind
 
--- TODO: This proof relies on the fact that the module has a single internal rule
---       Actually, deterministic → GloballyConfluent in that case
---       This instance is useless because of the implicit argument
-instance [dm: Deterministic mod] {sr: mod.internals.length = 1}: QuasiConfluent mod := {
+instance [dm: Deterministic mod] [sr: SingleInternal mod]: GloballyConfluent mod := {
   inputs    := by
     intros _ _ _ s₂ s₃ _ _
     use s₂
     and_intros
-    . apply existSR_reflexive
+    . exact existSR_reflexive
     . have: s₂ = s₃ := by apply dm.input_deterministic <;> assumption
-      rw [this]
-      apply existSR_reflexive
+      subst this
+      exact existSR_reflexive
   internals := by
-    intros s₁ s₂ s₃ r₁ hr₁ _ h
-    cases h with
+    intros s₁ s₂ s₃ h₁ h₂
+    induction h₁ with
     | done =>
-      use s₂ <;> and_intros
-      . apply existSR_reflexive
-      . apply existSR_single_step <;> assumption
-    | step _ mid _ r₂  =>
-      have: r₁ = r₂ := by
-        apply bla _ (by assumption) at hr₁
-        specialize hr₁ sr
-        symm <;> assumption
-      subst this
-      have: mid = s₂ := by
-        apply dm.internal_deterministic <;> assumption
-      subst this
-      use s₃
-      simpa [existSR_reflexive]
+      use s₃ <;> and_intros
+      . exact h₂
+      . exact existSR_reflexive
+    | step init mid final rule hᵣ _ h₁ ih =>
+      cases h₂ with
+      | done =>
+        use final <;> and_intros
+        . exact existSR_reflexive
+        . apply existSR_transitive mod.internals _ mid _
+          . apply existSR_single_step <;> assumption
+          . exact h₁
+      | step _ mid' _ rule' hᵣ' _ h₂ =>
+        have: rule = rule' := bla mod.internals hᵣ hᵣ' sr.prop
+        subst this
+        have: mid = mid' := by apply dm.internal_deterministic rule hᵣ init mid mid' _ _ <;> assumption
+        subst this
+        exact ih h₂
   outputs   := by
+    intros _ _ _ s₂ s₃ _ _
+    use s₂ <;> and_intros
+    . exact existSR_reflexive
+    . have: s₂ = s₃ := by apply dm.output_deterministic <;> assumption
+      subst this
+      exact existSR_reflexive
+}
+
+-- TODO: Maybe even quasi-confluent here?
+instance [dm: Deterministic mod] [sr: SwapDistinctRules mod]: LocallyConfluent mod where
+  inputs := by
     intros _ _ _ s₂ s₃ _ _
     use s₂
     and_intros
-    . apply existSR_reflexive
+    . exact existSR_reflexive
+    . have: s₂ = s₃ := by apply dm.input_deterministic <;> assumption
+      subst this
+      exact existSR_reflexive
+  internals := by
+    intro s₁ s₂ s₃ r₁ hr₁ r₂ hr₂ h₁ h₂
+    by_cases h: r₁ = r₂
+    . subst h
+      have: s₂ = s₃ := by apply dm.internal_deterministic <;> assumption
+      subst this
+      refine ⟨s₂, existSR_reflexive, existSR_reflexive⟩
+    . have ⟨s₄, _, _⟩ := sr.swap r₁ hr₁ r₂ hr₂ s₁ s₂ s₃ h h₁ h₂
+      use s₄ <;> and_intros
+      . apply existSR_single_step _ _ _ r₂ <;> assumption
+      . apply existSR_single_step _ _ _ r₁ <;> assumption
+  outputs := by
+    intros _ _ _ s₂ s₃ _ _
+    use s₂ <;> and_intros
+    . exact existSR_reflexive
     . have: s₂ = s₃ := by apply dm.output_deterministic <;> assumption
-      rw [this]
-      apply existSR_reflexive
-}
+      subst this
+      exact existSR_reflexive
+
 
 end Determinism
 

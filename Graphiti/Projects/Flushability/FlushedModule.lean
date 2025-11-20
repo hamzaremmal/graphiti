@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Hamza Remmal
 -/
@@ -7,29 +7,20 @@ Authors: Hamza Remmal
 import Mathlib.Tactic
 
 import Graphiti.Core.Module
+import Graphiti.Core.BasicLemmas
 import Graphiti.Core.ModuleLemmas
 
+import Graphiti.Projects.Flushability.Coe
 import Graphiti.Projects.Flushability.ConfluentModule
 import Graphiti.Projects.Flushability.RuleSwapping
 import Graphiti.Projects.Flushability.DeterministicModule
-import Graphiti.Projects.Flushability.SimulationRelation
 import Graphiti.Projects.Flushability.Outputability
-
--- TODO: Move this to a more global file
-@[reducible] def cast_first {β : Type _ → Type _} {a b : (Σ α, β α)} (h : a = b) : a.fst = b.fst := by
-  subst_vars; rfl
-
--- TODO: Move this to a more global file
-theorem sigma_rw {S T : Type _} {m m' : Σ (y : Type _), S → y → T → Prop} {x : S} {y : T} {v : m.fst}
-        (h : m = m' := by reduce; rfl) :
-  m.snd x v y ↔ m'.snd x ((cast_first h).mp v) y := by
-  constructor <;> (intros; subst h; assumption)
 
 namespace Graphiti
 
-variable {Ident S : Type _}
-
 section Flushability
+
+variable {Ident S : Type _}
 
 def pf (mod: Module Ident S) (s: S): Prop :=
   ∀ r ∈ mod.internals, ∀ s', ¬ r s s'
@@ -53,6 +44,8 @@ end Flushability
 
 section FlushedModules
 
+variable {Ident S : Type _}
+
 def rflushed (mod: Module Ident S) (rule: RelIO S): RelIO S :=
   ⟨rule.1 , λ s ret s'' => ∃ s', rule.2 s ret s' ∧ flushesTo mod s' s''⟩
 
@@ -71,43 +64,18 @@ def flushed (mod: Module Ident S): Module Ident S :=
     inputs     := mod.inputs.mapVal (λ _ v => rflushed mod v) -- transform all the rules to flushed rules
     internals  := []                                          -- no more internal rules, inputs takes up the role of internals
     outputs    := mod.outputs                                 -- output rules remains unchanges
-    init_state := isflushed mod                                -- Make sure the initial state is also flushed (use `iflushed`?)
+    init_state := isflushed mod                               -- Make sure the initial state is also flushed (use `iflushed`?)
   }
 
 end FlushedModules
 
 section MatchInterface
 
-variable {mod: Module Ident S}
-
-theorem preserves_input_types:
-  (flushed mod).inputs.mapVal (λ _ v => Sigma.fst v) = mod.inputs.mapVal (λ _ v => Sigma.fst v) :=
-by
-  rw [flushed, Batteries.AssocList.mapVal_mapVal]
-  dsimp [rflushed]
-
-theorem flushed_preserves_outputs:
-  (flushed mod).outputs = mod.outputs :=
-by
-  rfl
-
+variable {Ident: Type _}
 variable [DecidableEq Ident]
 
-theorem flushed_preserves_input_over_getIO:
-  ∀ {ident}, ((flushed mod).inputs.getIO ident).fst = (mod.inputs.getIO ident).fst :=
-by
-  intro ident
-  unfold PortMap.getIO
-  iterate 2 rw [<- Option.getD_map Sigma.fst]
-  iterate 2 rw [Batteries.AssocList.find?_map_comm]
-  rw [preserves_input_types]
-
-theorem flushed_preserves_input_over_getIO':
-  ∀ {ident}, (mod.inputs.getIO ident).fst = ((flushed mod).inputs.getIO ident).fst :=
-by
-  intro; symm; apply flushed_preserves_input_over_getIO
-
-theorem flushed_preserves_ports:
+-- TODO: THIS REMOVE THIS THEOREM SINCE IT SHOULD BE DERIVED FROM [MatchInterface]
+theorem flushed_preserves_ports {S : Type _} {mod: Module Ident S}:
   ∀ ident, (flushed mod).inputs.contains ident ↔ mod.inputs.contains ident :=
 by
   intro ident
@@ -121,16 +89,16 @@ by
       . have: (k == ident) = false := decide_eq_false h
         simp [this]
 
-instance: MatchInterface (flushed mod) mod := by
+instance {S: Type _} (mod: Module Ident S): MatchInterface (flushed mod) mod := by
   rw [MatchInterface_simpler_iff]
-  rw [preserves_input_types, flushed_preserves_outputs]
-  intros <;> and_intros <;> rfl
+  intros <;> and_intros
+  . rewrite [flushed, Batteries.AssocList.mapVal_mapVal] <;> dsimp [rflushed]
+  . dsimp [flushed]
 
-instance: MatchInterface mod (flushed mod) := by
+instance {S: Type _} (mod: Module Ident S): MatchInterface mod (flushed mod) := by
   haveI: MatchInterface (flushed mod) mod := by infer_instance
   apply MatchInterface_symmetric <;> assumption
 
-omit S mod in -- TODO: Looks like this omit is a noop
 instance {S₁ S₂: Type _} (mod₁: Module Ident S₁) (mod₂: Module Ident S₂) [MatchInterface mod₁ mod₂]: MatchInterface (flushed mod₁) (flushed mod₂) := by
   have: MatchInterface (flushed mod₁) mod₁ := by infer_instance
   have: MatchInterface mod₂ (flushed mod₂) := by infer_instance
@@ -138,11 +106,21 @@ instance {S₁ S₂: Type _} (mod₁: Module Ident S₁) (mod₂: Module Ident S
     apply MatchInterface_transitive <;> assumption
   apply MatchInterface_transitive <;> assumption
 
+instance {S₁ S₂: Type _} (mod₁: Module Ident S₁) (mod₂: Module Ident S₂) [MatchInterface mod₁ mod₂]: MatchInterface mod₁ (flushed mod₂) := by
+  have: MatchInterface mod₂ (flushed mod₂) := by infer_instance
+  apply MatchInterface_transitive <;> assumption
+
+instance {S₁ S₂: Type _} (mod₁: Module Ident S₁) (mod₂: Module Ident S₂) [MatchInterface mod₁ mod₂]: MatchInterface (flushed mod₁) mod₂ := by
+  have: MatchInterface (flushed mod₁) mod₁ := by infer_instance
+  apply MatchInterface_transitive <;> assumption
+
 end MatchInterface
+
+variable {Ident S : Type _}
 
 section FlushabilityLemmas
 
-variable {mod: Module Ident S}
+variable (mod: Module Ident S)
 
 theorem everystate_is_pf_in_flushed:
   ∀ s, pf (flushed mod) s :=
@@ -167,16 +145,17 @@ by
   assumption
 
 lemma flushesTo_implies_reachable:
-  ∀ {s₁} {s₂}, flushesTo mod s₁ s₂ → existSR mod.internals s₁ s₂ :=
+  ∀ {s₁ s₂}, flushesTo mod s₁ s₂ → existSR mod.internals s₁ s₂ :=
 by
   intro _ _ h
   cases h
   assumption
 
 lemma flushesTo_implies_flushable:
-  ∀ {s₁} {s₂}, flushesTo mod s₁ s₂ → flushable mod s₁ :=
+  ∀ {s₁ s₂}, flushesTo mod s₁ s₂ → flushable mod s₁ :=
 by
-  sorry
+  intros s₁ s₂ h
+  use s₂
 
 theorem flushesTo_reflexive:
   ∀ {s}, pf mod s → flushesTo mod s s :=
@@ -214,7 +193,7 @@ theorem pf_is_flushable:
 by
   intro s h
   use s
-  exact flushesTo_reflexive h
+  exact flushesTo_reflexive mod h
 
 instance: Flushable (flushed mod) := {
   flushable := by
@@ -225,49 +204,6 @@ instance: Flushable (flushed mod) := {
 }
 
 end FlushabilityLemmas
-
-section FlushableModules
-
-variable {S₁ S₂: Type _}
-variable (mod₁: Module Ident S₁) (mod₂: Module Ident S₂)
-variable [DecidableEq Ident]
-variable [fl₁: Flushable mod₁] [fl₂: Flushable mod₂]
-
-def φ₁ (s₁: S₁)(s₂: S₂): Prop := pf mod₁ s₁ ∧ pf mod₂ s₂
-
-instance [MatchInterface mod₁ mod₂]: WeakSimulationRelation (φ₁ mod₁ mod₂) mod₁ mod₂ := {
-  inputs_preserved := by
-    intro ident i₁ i₂ v s₁ s₂
-    obtain ⟨i₃, hi₃⟩ := fl₁.flushable i₂
-    obtain ⟨s₃, hs₃⟩ := fl₂.flushable s₂
-    use i₃, s₃
-    intros
-    and_intros
-    . apply flushesTo_implies_pf <;> assumption
-    . apply flushesTo_implies_pf <;> assumption
-  internals_preserved := by
-    intros i₁ s₁
-    obtain ⟨i₂, hi₂⟩ := fl₁.flushable i₁
-    obtain ⟨s₂, hs₂⟩ := fl₂.flushable s₁
-    use i₂, s₂
-    intros
-    and_intros
-    . apply flushesTo_implies_pf <;> assumption
-    . apply flushesTo_implies_pf <;> assumption
-  outputs_preserved := by
-    intro ident i₁ i₂ v s₁ s₂
-    obtain ⟨i₃, hi₃⟩ := fl₁.flushable i₂
-    obtain ⟨s₃, hs₃⟩ := fl₂.flushable s₂
-    use i₃, s₃
-    intros
-    and_intros
-    . apply flushesTo_implies_pf <;> assumption
-    . apply flushesTo_implies_pf <;> assumption
-  initial_state_preserves := by
-    sorry -- Wellformness of the module should solve this
-}
-
-end FlushableModules
 
 section QuasiConfluentModules
 
@@ -293,14 +229,20 @@ by
         apply pf_is_terminal <;> assumption
       subst this
       assumption
-  . assumption
+  . exact g
+
+/--
+info: 'Graphiti.newrule' does not depend on any axioms
+-/
+#guard_msgs in
+#print axioms newrule
 
 -- TODO: This is basically a rewritting of the newrule
 theorem flushable_reached_from_flushable:
-  ∀ s₁ s₂, flushable mod s₁ → existSR mod.internals s₁ s₂ → flushable mod s₂ :=
+  ∀ s₁ s₂, existSR mod.internals s₁ s₂ → flushable mod s₁ → flushable mod s₂ :=
 by
   intros s₁ s₂ h₁ h₂
-  obtain ⟨s₃, _⟩ := h₁
+  obtain ⟨s₃, _⟩ := h₂
   use s₃
   apply newrule <;> assumption
 
@@ -311,17 +253,17 @@ section GloballyConfluentModules
 variable {Ident S: Type _}
 variable [DecidableEq Ident]
 variable {mod: Module Ident S}
+variable [fl: Flushable mod]
+-- TODO: Can we reduce it to quasi/locally-confluent?
 variable [gc: GloballyConfluent mod]
 
--- TODO: Can we reduce it to quasi/locally-confluent?
 theorem flushed_is_unique:
-  ∀ s, flushable mod s → ∃! s', flushesTo mod s s' :=
+  ∀ s, ∃! s', flushesTo mod s s' :=
 by
-  intro s h
-  obtain ⟨s₂, h₁⟩ := h
-  use s₂ <;> dsimp
-  and_intros
-  . assumption
+  intro s
+  obtain ⟨s₂, h₁⟩ := fl.flushable s
+  use s₂ <;> dsimp <;> and_intros
+  . exact h₁
   . intro y h₂
     have: pf mod s₂ := by apply flushesTo_implies_pf at h₁ <;> assumption
     have: pf mod y := by apply flushesTo_implies_pf at h₂ <;> assumption
@@ -332,6 +274,26 @@ by
     subst this
     apply pf_is_terminal <;> assumption
 
+theorem flushed_fn: ∃ f: S → S, ∀ s₁ s₂, flushesTo mod s₁ s₂ ↔ f s₁ = s₂ := by
+  classical
+  have h: ∀ s, ∃! s', flushesTo mod s s' := flushed_is_unique
+  refine ⟨fun a => Classical.choose (h a), ?_⟩
+  intro a b
+  constructor
+  · intro hRab
+    have huniq := (Classical.choose_spec (h a)).2
+    dsimp <;> symm
+    exact huniq _ hRab
+  · intro hEq
+    subst hEq
+    exact (Classical.choose_spec (h a)).1
+
+/--
+info: 'Graphiti.flushed_fn' depends on axioms: [Classical.choice]
+-/
+#guard_msgs in
+#print axioms flushed_fn
+
 end GloballyConfluentModules
 
 section
@@ -339,29 +301,37 @@ section
   variable [DecidableEq Ident]
 
 -- TODO: Find a better name
-theorem flushed_inputs_are_rflushed: ∀ ident,
-  (flushed mod).inputs.getIO ident = rflushed mod (mod.inputs.getIO ident) :=
+-- todo, add tokens and states and make it a ↔
+theorem flushed_inputs_are_rflushed: ∀ ident s₁ v s₂,
+  ((flushed mod).inputs.getIO ident).snd s₁ v s₂ ↔ (rflushed mod (mod.inputs.getIO ident)).snd s₁ (coe_in.mp v) s₂ :=
 by
-  intros ident
-  dsimp [flushed, rflushed, PortMap.getIO]
-  rw [Batteries.AssocList.find?_mapVal]
-  by_cases h: mod.inputs.contains ident
-  . rw [<- Batteries.AssocList.contains_find?_iff] at h
-    obtain ⟨_, h⟩ := h; rw [h]
-    dsimp only [Option.map_some, Option.getD_some]
-  . apply Batteries.AssocList.contains_none at h
-    rw [h]; dsimp
-    simp only [false_and, exists_false]
+  intros ident _ _ _
+  have: ((flushed mod).inputs.getIO ident) = (rflushed mod (mod.inputs.getIO ident)) := by
+    dsimp [flushed, rflushed, PortMap.getIO]
+    rw [Batteries.AssocList.find?_mapVal]
+    by_cases h: mod.inputs.contains ident
+    . rw [<- Batteries.AssocList.contains_find?_iff] at h
+      obtain ⟨_, h⟩ := h; rw [h]
+      dsimp only [Option.map_some, Option.getD_some]
+    . apply Batteries.AssocList.contains_none at h
+      rw [h]; dsimp
+      simp only [false_and, exists_false]
+  rw [Module.sigma_rw' this]
+
+/--
+info: 'Graphiti.flushed_inputs_are_rflushed' depends on axioms: [propext, Quot.sound]
+-/
+#guard_msgs in
+#print axioms flushed_inputs_are_rflushed
 
 -- TODO: LocalConfluence should be enough here if newrule holds with local confluence
 theorem flushed_reachable_from_nonflushed [lc: QuasiConfluent mod] : ∀ ident s₁ v s₂ s₃,
   ((flushed mod).inputs.getIO ident).snd s₁ v s₃
-  → (mod.inputs.getIO ident).snd s₁ (flushed_preserves_input_over_getIO.mp v) s₂
+  → (mod.inputs.getIO ident).snd s₁ (coe_in.mp v) s₂
   → existSR mod.internals s₂ s₃ :=
 by
   intro ident s₁ v s₂ s₃ h₁ h₂
-  have := flushed_inputs_are_rflushed mod ident
-  rw [sigma_rw this] at h₁
+  rewrite [flushed_inputs_are_rflushed] at h₁
   dsimp [rflushed] at h₁
   obtain ⟨w, _, _, _⟩ := h₁
   have: ∃ s₄, existSR mod.internals s₂ s₄ ∧ existSR mod.internals w s₄ := by
@@ -380,18 +350,21 @@ theorem flushed_modules_has_flushed_states: ∀ ident s₁ v s₂,
   ((flushed mod).inputs.getIO ident).snd s₁ v s₂ → pf mod s₂ :=
 by
   intro ident _ _ _ h
-  have HContains: (flushed mod).inputs.contains ident := by
-    apply PortMap.rule_contains <;> assumption
-  simp only [flushed_preserves_ports] at HContains
+  have HContains: mod.inputs.contains ident := by
+    have mm: MatchInterface mod (flushed mod) := by infer_instance
+    have: (flushed mod).inputs.contains ident := by
+      apply PortMap.rule_contains <;> assumption
+    rewrite [<- Batteries.AssocList.contains_find?_isSome_iff]
+    rewrite [mm.inputs_present]
+    rewrite [Batteries.AssocList.contains_find?_isSome_iff]
+    exact this
   have: ∃ mrule, mod.inputs.find? ident = some mrule := by
     rw [Batteries.AssocList.contains_find?_iff] <;> assumption
+  clear HContains
   obtain ⟨_, h₂⟩ := this
   apply PortMap.getIO_some at h₂
   subst h₂
-  have: (flushed mod).inputs.getIO ident = rflushed mod (mod.inputs.getIO ident) := by
-    apply flushed_inputs_are_rflushed <;> assumption
-  clear HContains
-  rw [sigma_rw (by assumption)] at h
+  rewrite [flushed_inputs_are_rflushed] at h
   dsimp [rflushed] at h
   obtain ⟨_, _, _, _⟩ := h
   assumption
@@ -463,8 +436,8 @@ theorem flushed_idempotent:
   flushed (flushed mod) = flushed mod :=
 by
   -- TODO: Why can't I merge both rw by giving both positions to the first one? Bug in the tactic?
-  rw (occs := .pos [1]) [flushed]
-  rw (occs := .pos [5]) [flushed]
+  rewrite (occs := .pos [1]) [flushed]
+  rewrite (occs := .pos [5]) [flushed]
   ext
   . dsimp
     rw (occs := .pos [2]) [flushed] <;> dsimp
@@ -473,8 +446,8 @@ by
     exact rflushed_idempotent' rule
   . dsimp [flushed]
   . dsimp [flushed] <;> rfl -- TODO: Why do we have this form in the goal. What did ext do?
-  . dsimp [flushed]
-    sorry -- This doesn't hold at the moment
+  . dsimp [flushed, isflushed]
+    rfl
 
 end Idempotence
 
@@ -492,8 +465,8 @@ variable [DecidableEq Ident]
 
 instance: DeterministicInternals (flushed mod) := {
   internal_deterministic := by
-    intros
-    dsimp [flushed] at *
+    intros _ h _ _ _ _ _
+    dsimp [flushed] at h
     contradiction
 }
 
@@ -504,74 +477,112 @@ instance [dt: DeterministicOutputs mod]: DeterministicOutputs (flushed mod) := {
     apply dt.output_deterministic <;> assumption
 }
 
-instance [dt: DeterministicInputs mod] [gc: GloballyConfluent mod]: DeterministicInputs (flushed mod) := {
+instance [gc: GloballyConfluent mod]: DeterministicInputs (flushed mod) := {
   input_deterministic := by
     intros ident s₁ v s₂ s₃ h₁ h₂
-    rw [sigma_rw (flushed_inputs_are_rflushed _ _)] at *
-    obtain ⟨w₁, _, h₁⟩ := h₁
-    obtain ⟨w₂, _, h₂⟩ := h₂
-    have: w₁ = w₂ := by apply dt.input_deterministic <;> assumption
+    rewrite [flushed_inputs_are_rflushed] at h₁ h₂
+    obtain ⟨w₁, hl₁, ⟨hr₁, h₁⟩⟩ := h₁
+    obtain ⟨w₂, hl₂, ⟨hr₂, h₂⟩⟩ := h₂
+    obtain ⟨w₃, hl₃, hr₃⟩ := gc.inputs ident s₁ (coe_in.mp v) w₁ w₂ hl₁ hl₂
+    obtain ⟨w₄, hl₄, hr₄⟩ := gc.internals w₁ s₂ w₃ hr₁ hl₃
+    obtain ⟨w₅, hl₅, hr₅⟩ := gc.internals w₂ s₃ w₃ hr₂ hr₃
+    obtain ⟨w₆, hl₆, hr₆⟩ := gc.internals w₃ w₄ w₅ hr₄ hr₅
+    have: s₃ = w₅ := pf_is_terminal mod s₃ w₅ h₂ hl₅
     subst this
-    have := by apply flushesTo_implies_flushable at h₁ <;> assumption
-    apply flushed_is_unique at this
-    obtain ⟨w, _, h⟩ := this
-    have := by apply h s₃ <;> assumption
+    have: s₃ = w₆ := pf_is_terminal mod s₃ w₆ h₂ hr₆
     subst this
-    apply h
-    exact h₁
+    have: s₂ = w₄ := pf_is_terminal mod s₂ w₄ h₁ hl₄
+    subst this
+    exact pf_is_terminal mod s₂ s₃ h₁ hl₆
 }
 
--- TODO: This should be derived from above
-instance [DeterministicInputs mod] [DeterministicOutputs mod] [GloballyConfluent mod]: Deterministic (flushed mod) := by infer_instance
-
--- TODO: Is this actually correct to have?
-instance [Deterministic (flushed mod)]: Deterministic mod := {
-  input_deterministic    := sorry
-  internal_deterministic := sorry
-  output_deterministic   := sorry
-}
+instance [DeterministicOutputs mod] [GloballyConfluent mod]: Deterministic (flushed mod) := by
+  constructor
 
 end Determinism
 
-section SimulationRelation
+/-section Wellfoundness
+
+variable (mod: Module Ident S)
+variable [DecidableEq Ident]
+variable [fl: Flushable mod]
+
+-- TODO: PROVE THAT FROM FLUSHABLE DIRECTLY??
+private theorem wf: WellFounded (λ s₁ s₂ => existSR' mod.internals s₂ s₁) :=
+by
+  constructor
+  intro s
+  sorry
+
+variable [lc: LocallyConfluent mod]
+
+instance: GloballyConfluent mod where
+  inputs    := lc.inputs
+  internals := by
+    intros s₁
+    induction s₁ using (wf mod).induction
+    rename_i s₁ ih
+    intro s₂ s₃ h₂ h₃
+    cases h₂ with
+    | done => refine ⟨s₃, h₃, existSR_reflexive⟩
+    | step _ mid₁ _ rule₁ _ h'₁ h'₂ =>
+      cases h₃ with
+      | done =>
+        refine ⟨s₂, existSR_reflexive, ?_⟩
+        have: existSR mod.internals s₁ mid₁ := by
+          apply existSR_single_step <;> assumption
+        apply existSR_transitive <;> assumption
+      | step _ mid₂ _ rule₂ _ h''₁ h''₂ =>
+        obtain ⟨d, h2d, h3d⟩: ∃ s₄, existSR mod.internals mid₁ s₄ ∧ existSR mod.internals mid₂ s₄ := by
+          apply lc.internals s₁ mid₁ mid₂ rule₁ _ rule₂ <;> assumption
+
+        have: existSR' mod.internals s₁ mid₁ := by
+          apply existSR'.step _ _ _ rule₁ <;> try assumption
+          exact existSR_reflexive
+        obtain ⟨e, hbe, hde⟩ := ih mid₁ this s₂ d (by assumption) (by assumption)
+
+        have: existSR' mod.internals s₁ mid₂ := by
+          apply existSR'.step _ _ _ rule₂ <;> try assumption
+          exact existSR_reflexive
+        obtain ⟨f, hcf, hdf⟩ := ih mid₂ this s₃ d (by assumption) (by assumption)
+
+        have: existSR' mod.internals s₁ d := by
+          constructor <;> assumption
+        obtain ⟨g, heg, hfg⟩ := ih d this e f hde hdf
+        refine ⟨g, by apply existSR_transitive <;> assumption, by apply existSR_transitive <;> assumption⟩
+  outputs   := lc.outputs
+
+end Wellfoundness-/
+
+section RuleSwap
 
 variable [DecidableEq Ident]
-variable {S₁ S₂: Type _}
-variable {mod₁: Module Ident S₁}
-variable {mod₂: Module Ident S₂}
-variable {φ: S₁ → S₂ → Prop}
-variable [MatchInterface mod₁ mod₂]
+variable {mod: Module Ident S}
 
-instance [sr: SimulationRelation φ mod₁ mod₂]: SimulationRelation φ (flushed mod₁) (flushed mod₂) := {
-  inputs_preserved    := by
-    intros ident i₁ i₂ v s₁ s₂ h₁ h₂ h₃
-    rw [sigma_rw (flushed_inputs_are_rflushed _ _)] at h₂
-    rw [sigma_rw (flushed_inputs_are_rflushed _ _)] at h₃
-    obtain ⟨w₁, _, _, _⟩ := h₂
-    obtain ⟨w₂, _, _, _⟩ := h₃
-    simp at *
-    have: φ w₁ w₂ := by
-      apply sr.inputs_preserved <;> simpa
-    apply sr.internals_preserved <;> assumption
-  internals_preserved := by
-    intros i₁ i₂ s₁ s₂ h₁ h₂ h₃
-    dsimp [flushed] at h₂ h₃
-    apply existSR_norules at h₂ <;> subst h₂
-    apply existSR_norules at h₃ <;> subst h₃
-    exact h₁
-  outputs_preserved   := by
-    intros ident i₁ i₂ v s₁ s₂ h₁ h₂ h₃
-    dsimp [flushed] at h₂ h₃
-    apply sr.outputs_preserved <;> assumption
-  initial_state_preserves := by
-    intros i s h₁ h₂
-    dsimp [flushed, isflushed] at *
-    apply sr.initial_state_preserves <;> assumption
-}
+-- TODO: THE WAY THIS IS WRITTEN IS NOT VERY FRIENDLY HERE
+-- NOTE: NEED THE MODULE TO BE FLUSHABLE TOO, PROBABLY CONFLUENT TOO
+-- I NEED DETERMINISM TO GET THE TRANSFORMATION FROM THE RELATION
+instance [dass: DistinctActionSwaps' mod][GloballyConfluent mod]: DistinctActionStronglySwaps' (flushed mod) where
+  inputs  := by
+    intros ident₁ ident₂ s₁ v₂ s' s₃ h h₁ h₂
+    have h₁: ∀ (v₁ : ((flushed mod).inputs.getIO ident₁).fst), (rflushed mod (mod.inputs.getIO ident₁)).snd s₁ (coe_in.mp v₁) (s' v₁) := by
+      intro v₁
+      specialize h₁ v₁
+      rewrite [flushed_inputs_are_rflushed] at h₁
+      exact h₁
+    rename_i a <;> clear a
+    rewrite [flushed_inputs_are_rflushed] at h₂
+    dsimp [rflushed] at h₁ h₂
+    --rewrite [forall_and] at h₁
+    have := dass.inputs ident₁ ident₂ s₁ (coe_in.mp v₂) sorry sorry h
+    sorry
+  --outputs := sorry
+  in_out  := sorry
+  --out_in  := sorry
+  in_int  := sorry
+  --out_int := sorry
 
--- TODO: pf mod s is a (weak) simulation relation between any two flushable modules
---       A weak simulation relation allows arbitrary operations after inputing and outputing and in the initial states
-end SimulationRelation
+end RuleSwap
 
 section Lemmas
 
@@ -581,23 +592,21 @@ variable (mod: Module Ident S)
 
 lemma m_imp_fm [f: Flushable mod] : ∀ ident s₁ v s₂,
   (mod.inputs.getIO ident).snd s₁ v s₂
-  → ∃ s₃, ((flushed mod).inputs.getIO ident).snd s₁ (flushed_preserves_input_over_getIO'.mp v) s₃ :=
+  → ∃ s₃, ((flushed mod).inputs.getIO ident).snd s₁ (coe_in.mp v) s₃ :=
 by
   intros ident _ _ s₂ _
   obtain ⟨s₃, _⟩ := f.flushable s₂
   use s₃
-  have := flushed_inputs_are_rflushed mod ident
-  rw [sigma_rw this]
+  rewrite [flushed_inputs_are_rflushed]
   simp [rflushed]
   use s₂
 
 lemma fm_imp_m: ∀ ident s₁ v s₂,
   ((flushed mod).inputs.getIO ident).snd s₁ v s₂
-  → ∃ s₃, (mod.inputs.getIO ident).snd s₁ (flushed_preserves_input_over_getIO.mp v) s₃ :=
+  → ∃ s₃, (mod.inputs.getIO ident).snd s₁ (coe_in.mp v) s₃ :=
 by
   intros ident _ _ _ h
-  have := flushed_inputs_are_rflushed mod ident
-  rw [sigma_rw this] at h
+  rewrite [flushed_inputs_are_rflushed] at h
   simp [rflushed] at h
   obtain ⟨s₃, _, _⟩ := h
   simp
@@ -642,25 +651,23 @@ variable [DecidableEq Ident]
 section FlushedRefinesNonFlushed
 
 private theorem flushed_refinesφ_nonflushed:
-  flushed mod ⊑_{Eq} mod := by
+  flushed mod ⊑_{Eq} mod :=
+by
   unfold Module.refines_φ
   intro init_i init_s Hφ
   subst_vars
   apply Module.comp_refines.mk
-  -- input rules
   . intro ident mid_i v h
     simp only [eq_mp_eq_cast, exists_and_left, exists_eq_right']
-    rw [sigma_rw (flushed_inputs_are_rflushed _ _)] at h
+    rewrite [flushed_inputs_are_rflushed] at h
     dsimp [rflushed] at h
     obtain ⟨s', _, h⟩ := h
     apply flushesTo_implies_reachable at h
     use s'
-  -- output rules
   . intro _ mid_i _ _
     dsimp [flushed] at *
     use init_s, mid_i;
     and_intros <;> simpa [existSR_reflexive]
-  -- internal rules
   . intro _ mid_i h _
     dsimp [flushed] at h
     contradiction
@@ -670,35 +677,35 @@ private theorem refines_init:
 by
   unfold Module.refines_initial
   intros s h
-  dsimp [flushed, isflushed] at h
   use s
-  --obtain ⟨w, _, _⟩ := h
-  --use w
-  --and_intros
-  --. assumption
-  --. sorry -- only when mod has flushed initial states.
-    -- TODO: Should this be included in the wellformness of a module?
+  dsimp [flushed, isflushed] at h
+  trivial
 
-theorem flushed_refines_nonflushed: flushed mod ⊑ mod :=
+/-- TODO: WRITE THE DOCUMENTATION HERE -/
+theorem flushed_refines_nonflushed:
+  flushed mod ⊑ mod :=
 by
   unfold Module.refines
-  have mm: MatchInterface (flushed mod) mod := by infer_instance
-  use mm
-  use Eq
-  and_intros
+  use (by infer_instance), Eq <;> and_intros
   . apply flushed_refinesφ_nonflushed
   . apply refines_init
+
+/--
+info: 'Graphiti.flushed_refines_nonflushed' depends on axioms: [propext, Quot.sound]
+-/
+#guard_msgs in
+#print axioms flushed_refines_nonflushed
 
 end FlushedRefinesNonFlushed
 
 section NonFlushedRefinesFlushed
 
 variable [qc: QuasiConfluent mod] -- TODO: Can we only use local confluence?
-variable [sm: RuleMaySwap mod] -- TODO: Can we derive this property from some sort of confluence?
+variable [sm: RuleSwapWithMethods mod] -- TODO: Can we derive this property from some sort of confluence?
 variable [fl: Flushable mod]
 variable [opfm: OutputPreservesFlushability mod] -- TODO: Definition of flushed should guarantee this
 
-theorem nonflushed_refinesφ_flushed:
+private theorem nonflushed_refinesφ_flushed:
   mod ⊑_{flushesTo mod} flushed mod :=
 by
   unfold Module.refines_φ
@@ -715,9 +722,8 @@ by
     and_intros
     . assumption
     . apply existSR_reflexive
-    . have := flushed_inputs_are_rflushed mod ident
-      rw [sigma_rw this] at h₃
-      simp [rflushed] at h₃ <;> clear this
+    . rewrite [flushed_inputs_are_rflushed] at h₃
+      simp [rflushed] at h₃
       obtain ⟨s₅, _, _, _⟩ := h₃
       constructor
       . apply existSR_transitive _ _ s₄ _
@@ -774,7 +780,8 @@ by
   . dsimp [flushed, isflushed] <;> assumption
   . sorry -- TODO: Wellformness should solve this
 
-theorem nonflushed_refines_flushed: mod ⊑ flushed mod :=
+theorem nonflushed_refines_flushed:
+  mod ⊑ flushed mod :=
 by
   unfold Module.refines
   have mm: MatchInterface mod (flushed mod) := by infer_instance
@@ -786,8 +793,33 @@ by
 
 end NonFlushedRefinesFlushed
 
+section Indistinguishability
+
+variable {S₁ S₂: Type _}
+variable (mod₁: Module Ident S₁) (mod₂: Module Ident S₂)
+variable [MatchInterface mod₁ mod₂]
+
+variable (φ: S₁ → S₂ → Prop)
+
+instance [ind: Indistinguishable mod₁ mod₂ φ][fl: Flushable mod₂] : Indistinguishable mod₁ (flushed mod₂) φ := by
+  constructor
+  intros i₁ s₁ φₕ
+  have h: indistinguishable mod₁ mod₂ i₁ s₁ := ind.prop i₁ s₁ φₕ
+  clear ind φₕ
+  constructor
+  . intros ident i₂ v h'
+    have ⟨s₂, h₂⟩ := h.inputs_indistinguishable ident i₂ v h'
+    have ⟨s₃, h₃⟩: ∃ s₃, flushesTo mod₂ s₂ s₃ := by
+      apply fl.flushable
+    use s₃
+    rewrite [flushed_inputs_are_rflushed] <;> simp
+    use s₂ <;> and_intros
+    . exact h₂
+    . exact h₃
+  . dsimp [flushed] <;> exact h.outputs_indistinguishable
+
+end Indistinguishability
+
 end Refinements
 
 end Graphiti
-
--- TODO: derive flushability patterns of connect module from outputability patterns of base modules?

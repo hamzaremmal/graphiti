@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Hamza Remmal
 -/
@@ -55,15 +55,21 @@ section Indistinguishability
 
 variable (ψ : S₁ → S₂ → Prop)
 
-class Indistinguishable :=
-  inputs: ∀ ident i₁ s₁ i₂ v,
-    ψ i₁ s₁ →
-    (mod₁.inputs.getIO ident).snd i₁ v i₂ →
-    ∃ s₂, (mod₂.inputs.getIO ident).snd s₁ ((mm.input_types ident).mp v) s₂
-  outputs: ∀ ident i₁ s₁ i₂ v,
-    ψ i₁ s₁ →
-    (mod₁.outputs.getIO ident).snd i₁ v i₂ →
-    ∃ s₂, (mod₂.outputs.getIO ident).snd s₁ ((mm.output_types ident).mp v) s₂
+/-
+This could be made even more flexible by passing a custom type comparison
+function for the inputs and outputs.  For now this might be general enough
+though.
+-/
+structure indistinguishable (init_i : S₁) (init_s : S₂) : Prop where
+  inputs_indistinguishable : ∀ (ident : InternalPort Ident) new_i v,
+    (mod₁.inputs.getIO ident).2 init_i v new_i →
+    ∃ new_s, (mod₂.inputs.getIO ident).2 init_s ((mm.input_types ident).mp v) new_s
+  outputs_indistinguishable : ∀ ident new_i v,
+    (mod₁.outputs.getIO ident).2 init_i v new_i →
+    ∃ new_s, (mod₂.outputs.getIO ident).2 init_s ((mm.output_types ident).mp v) new_s
+
+class Indistinguishable: Prop where
+  prop: ∀ i₁ s₁, ψ i₁ s₁ → indistinguishable mod₁ mod₂ i₁ s₁
 
 end Indistinguishability
 
@@ -71,36 +77,24 @@ section Composition
 
 variable (ψ₁: S₁ → S₂ → Prop) (ψ₂: S₁ → S₂ → Prop)
 
-instance [ind: Indistinguishable mod₁ mod₂ ψ₁]: Indistinguishable mod₁ mod₂ (ψ₁ ∧ ψ₂) := {
-  inputs := by
-    intro _ _ _ _ _ ⟨_, _⟩ _
-    apply ind.inputs <;> assumption
-  outputs := by
-    intro _ _ _ _ _ ⟨_, _⟩ _
-    apply ind.outputs<;> assumption
-}
+instance [ind: Indistinguishable mod₁ mod₂ ψ₁]: Indistinguishable mod₁ mod₂ (ψ₁ ∧ ψ₂) := by
+  constructor
+  intro i₁ s₁ ⟨h, _⟩
+  apply ind.prop
+  exact h
 
-instance [ind: Indistinguishable mod₁ mod₂ ψ₂]: Indistinguishable mod₁ mod₂ (ψ₁ ∧ ψ₂) := {
-  inputs := by
-    intro _ _ _ _ _ ⟨_, _⟩ _
-    apply ind.inputs <;> assumption
-  outputs := by
-    intro _ _ _ _ _ ⟨_, _⟩ _
-    apply ind.outputs<;> assumption
-}
+instance [ind: Indistinguishable mod₁ mod₂ ψ₂]: Indistinguishable mod₁ mod₂ (ψ₁ ∧ ψ₂) := by
+  constructor
+  intro i₁ s₁ ⟨_, h⟩
+  apply ind.prop
+  exact h
 
-instance [ind₁: Indistinguishable mod₁ mod₂ ψ₁] [ind₂: Indistinguishable mod₁ mod₂ ψ₂]: Indistinguishable mod₁ mod₂ (ψ₁ ∨ ψ₂) := {
-  inputs := by
-    intro _ _ _ _ _ h _
-    cases h
-    . apply ind₁.inputs <;> assumption
-    . apply ind₂.inputs <;> assumption
-  outputs := by
-    intro _ _ _ _ _ h _
-    cases h
-    . apply ind₁.outputs <;> assumption
-    . apply ind₂.outputs <;> assumption
-}
+instance [ind₁: Indistinguishable mod₁ mod₂ ψ₁] [ind₂: Indistinguishable mod₁ mod₂ ψ₂]: Indistinguishable mod₁ mod₂ (ψ₁ ∨ ψ₂) := by
+  constructor
+  intro i₁ s₁ h
+  rcases h with h | h
+  . apply ind₁.prop <;> exact h
+  . apply ind₂.prop <;> exact h
 
 end Composition
 

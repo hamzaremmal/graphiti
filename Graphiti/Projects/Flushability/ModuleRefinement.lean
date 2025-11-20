@@ -1,3 +1,9 @@
+/-
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Hamza Remmal
+-/
+
 import Graphiti.Core.Module
 import Graphiti.Core.ModuleLemmas
 import Graphiti.Projects.Flushability.SimulationRelation
@@ -37,7 +43,7 @@ theorem refines₀: mod₁ ⊑_{φ} mod₂ := by
   intro init_i init_s Hφ
   apply Module.comp_refines.mk
   . intros ident mid_i v h
-    obtain ⟨almost_mid_s, h⟩ := id.inputs ident init_i init_s mid_i v Hφ h
+    obtain ⟨almost_mid_s, h⟩ := (id.prop init_i init_s Hφ).inputs_indistinguishable ident mid_i v h
     use almost_mid_s, almost_mid_s
     apply And.intro
     . assumption
@@ -49,7 +55,7 @@ theorem refines₀: mod₁ ⊑_{φ} mod₂ := by
     rw [exists_and_left]
     and_intros
     . apply existSR_reflexive
-    . obtain ⟨mid_s, h⟩ := id.outputs ident init_i init_s mid_i v Hφ h
+    . obtain ⟨mid_s, h⟩ := (id.prop init_i init_s Hφ).outputs_indistinguishable ident mid_i v h
       use mid_s
       apply And.intro
       . assumption

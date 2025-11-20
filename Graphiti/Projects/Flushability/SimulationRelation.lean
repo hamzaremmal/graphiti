@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Hamza Remmal
 -/

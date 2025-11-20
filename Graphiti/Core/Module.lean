@@ -7,6 +7,8 @@ Authors: Yann Herklotz
 import Lean
 import Qq
 
+import Mathlib.Tactic
+
 import Graphiti.Core.Basic
 import Graphiti.Core.Simp
 import Graphiti.Core.List
@@ -23,6 +25,7 @@ namespace Graphiti
 State that there exists zero or more internal rule executions to reach a final
 state from an initial state.
 -/
+-- TODO Hamza: Better renaming things here? This is the →* relation
 inductive existSR {S : Type _} (rules : List (S → S → Prop)) : S → S → Prop where
 | done : ∀ init, existSR rules init init
 | step : ∀ init mid final rule,
@@ -30,6 +33,14 @@ inductive existSR {S : Type _} (rules : List (S → S → Prop)) : S → S → P
     rule init mid →
     existSR rules mid final →
     existSR rules init final
+
+-- TODO Hamza: Better renaming things here? This is the →⁺ relation
+inductive existSR' {S : Type _} (rules : List (S → S → Prop)) : S → S → Prop where
+| step : ∀ init mid final rule,
+    rule ∈ rules →
+    rule init mid →
+    existSR rules mid final →
+    existSR' rules init final
 
 /-- Input/Output relation --/
 @[simp] abbrev RelIO (S : Type _) := Σ T : Type, S → T → S → Prop
@@ -223,6 +234,11 @@ theorem sigma_cast' {α} {f : α → Type _} {x y : Sigma f} (h : x = y) :
 
 theorem sigma_rw {α} {f : α → Type _} {x y : Sigma f} (h : x = y) :
   x.snd = (sigma_cast h).mpr y.snd := by subst x; rfl
+
+theorem sigma_rw' {S T : Type _} {m m' : Σ (y : Type _), S → y → T → Prop} {x : S} {y : T} {v : m.fst}
+        (h : m = m' := by reduce; rfl) :
+  m.snd x v y ↔ m'.snd x ((Graphiti.PortMap.cast_first h).mp v) y := by
+  constructor <;> (intros; subst h; assumption)
 
 theorem liftR_connect {S I} {a b : Σ T, S → T → S → Prop}:
   liftR' (S := I) (connect'' a.snd b.snd) = connect'' (liftR a).snd (liftR b).snd := by

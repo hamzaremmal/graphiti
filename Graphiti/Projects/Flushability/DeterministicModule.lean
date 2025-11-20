@@ -1,5 +1,5 @@
 /-
-Copyright (c) 2025 VCA Lab, EPFL. All rights reserved.
+Copyright (c) 2025-2026 VCA Lab, EPFL. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Hamza Remmal
 -/
@@ -34,12 +34,5 @@ class Deterministic (mod: Module Ident S) extends
   DeterministicInputs mod,
   DeterministicInternals mod,
   DeterministicOutputs mod
-
-variable {mod: Module Ident S} in
-instance [d₁: DeterministicInputs mod] [d₂: DeterministicInternals mod] [d₃: DeterministicOutputs mod]: Deterministic mod := {
-  input_deterministic    := d₁.input_deterministic
-  internal_deterministic := d₂.internal_deterministic
-  output_deterministic   := d₃.output_deterministic
-}
 
 end Graphiti
